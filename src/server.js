@@ -9,6 +9,7 @@ import promptRoutes from "./routes/promptRoutes.js"
 import cartRoutes from "./routes/cartRoutes.js"
 import orderRoutes from "./routes/orderRoutes.js"
 import learningRoutes from "./routes/learningRoutes.js"
+import chatRoutes from "./routes/chatRoutes.js"
 
 import { setupSwagger } from "./config/swagger.js"
 
@@ -31,6 +32,7 @@ app.use("/api/prompts", promptRoutes)
 app.use("/api/cart", cartRoutes)
 app.use("/api/orders", orderRoutes)
 app.use("/api/learning", learningRoutes)
+app.use("/api/chat",chatRoutes )
 app.use((err, req, res, next) => {
   console.error(err.stack)
   res.status(500).json({ success: false, message: "Internal Server Error" })

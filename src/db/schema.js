@@ -11,9 +11,7 @@ import {
   unique,
 } from "drizzle-orm/pg-core"
 
-
 // TABLES
-
 
 export const users = pgTable("User", {
   userId: serial("userId").primaryKey(),
