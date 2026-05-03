@@ -13,6 +13,7 @@ import {
 
 const router = express.Router()
 
+// Hàm sắp xếp object bắt buộc của VNPay
 function sortObject(obj) {
   let sorted = {}
   let str = []
@@ -29,19 +30,28 @@ function sortObject(obj) {
   return sorted
 }
 
+// 1. TẠO URL THANH TOÁN
 router.post("/create-payment", async (req, res) => {
   const date = new Date()
-  const createDate = moment(date).format("YYYYMMDDHHmmss")
-  const ipAddr =
-    req.headers["x-forwarded-for"] || req.socket.remoteAddress || "127.0.0.1" // Fix nhẹ đề phòng ipAddr bị undefined
 
-  const tmnCode = process.env.VNP_TMNCODE
-  const secretKey = process.env.VNP_HASHSECRET
-  let vnpUrl = process.env.VNP_URL
-  const returnUrl = process.env.VNP_RETURNURL
+  // FIX 1: Ép múi giờ về GMT+7 (Việt Nam) bất kể server đang chạy ở đâu
+  const createDate = moment(date).utcOffset("+07:00").format("YYYYMMDDHHmmss")
+  const orderId = moment(date).utcOffset("+07:00").format("DDHHmmss")
 
-  const orderId = moment(date).format("DDHHmmss")
-  const amount = req.body.amount
+  // FIX 2: Lấy đúng 1 IP thật của user khi app chạy sau proxy của Render
+  let ipAddr =
+    req.headers["x-forwarded-for"] || req.socket.remoteAddress || "127.0.0.1"
+  if (ipAddr.includes(",")) {
+    ipAddr = ipAddr.split(",")[0].trim()
+  }
+
+  // FIX 3: Thêm .trim() để tránh lỗi vô tình dư khoảng trắng trong file .env
+  const tmnCode = process.env.VNP_TMNCODE?.trim()
+  const secretKey = process.env.VNP_HASHSECRET?.trim()
+  let vnpUrl = process.env.VNP_URL?.trim()
+  const returnUrl = process.env.VNP_RETURNURL?.trim()
+
+  const amount = Math.round(Number(req.body.amount)) // Đảm bảo amount là số nguyên
 
   let vnp_Params = {
     vnp_Version: "2.1.0",
@@ -70,6 +80,7 @@ router.post("/create-payment", async (req, res) => {
   res.json({ paymentUrl: vnpUrl })
 })
 
+// 2. NHẬN KẾT QUẢ TỪ VNPAY (IPN)
 router.get("/vnpay_ipn", async (req, res) => {
   let vnp_Params = req.query
   const secureHash = vnp_Params["vnp_SecureHash"]
@@ -77,14 +88,11 @@ router.get("/vnpay_ipn", async (req, res) => {
   delete vnp_Params["vnp_SecureHash"]
   delete vnp_Params["vnp_SecureHashType"]
 
-  vnp_Params = Object.keys(vnp_Params)
-    .sort()
-    .reduce((obj, key) => {
-      obj[key] = vnp_Params[key]
-      return obj
-    }, {})
+  // FIX 4: Đồng bộ cách sort bằng hàm sortObject thay vì Object.keys().sort()
+  // Để đảm bảo chữ ký tạo ra khớp 100% với lúc gửi đi
+  vnp_Params = sortObject(vnp_Params)
 
-  const secretKey = process.env.VNP_HASHSECRET
+  const secretKey = process.env.VNP_HASHSECRET?.trim()
   const signData = querystring.stringify(vnp_Params, { encode: false })
   const hmac = crypto.createHmac("sha512", secretKey)
   const signed = hmac.update(Buffer.from(signData, "utf-8")).digest("hex")
@@ -167,6 +175,7 @@ router.get("/vnpay_ipn", async (req, res) => {
       res.status(200).json({ RspCode: "99", Message: "Unknown error" })
     }
   } else {
+    console.error("Checksum failed at IPN!")
     res.status(200).json({ RspCode: "97", Message: "Fail checksum" })
   }
 })
