@@ -9,6 +9,8 @@ import {
   userCourses,
   transactions,
 } from "../db/schema.js"
+import { verifyToken } from "../middlewares/authMiddleware.js"
+
 
 const router = express.Router()
 
@@ -29,9 +31,9 @@ function buildSignData(params) {
 }
 
 
-router.post("/create-payment", async (req, res, next) => {
+router.post("/create-payment", verifyToken, async (req, res, next) => {
   try {
-    const userId = req.user.userId;
+    const userId = req.user.userId
     const cartItems = await db
       .select({
         courseId: userCarts.courseId,
@@ -43,40 +45,45 @@ router.post("/create-payment", async (req, res, next) => {
       .from(userCarts)
       .leftJoin(courses, eq(userCarts.courseId, courses.courseId))
       .leftJoin(prompts, eq(userCarts.promptId, prompts.promptId))
-      .where(eq(userCarts.userId, userId));
+      .where(eq(userCarts.userId, userId))
 
     if (cartItems.length === 0) {
-      return res.status(400).json({ success: false, message: "Cart is empty" });
+      return res.status(400).json({ success: false, message: "Cart is empty" })
     }
 
-    let totalAmount = 0;
+    let totalAmount = 0
     cartItems.forEach((item) => {
-      const price = item.courseId ? Number(item.coursePrice) : Number(item.promptPrice);
-      totalAmount += price * (item.quantity || 1);
-    });
+      const price = item.courseId
+        ? Number(item.coursePrice)
+        : Number(item.promptPrice)
+      totalAmount += price * (item.quantity || 1)
+    })
 
-    const finalTotalUSD = totalAmount * 1.1;
-    const exchangeRate = 25000; 
-    const finalTotalVND = Math.round(finalTotalUSD * exchangeRate);
+    const finalTotalUSD = totalAmount * 1.1
+    const exchangeRate = 25000
+    const finalTotalVND = Math.round(finalTotalUSD * exchangeRate)
 
     // 2. TẠO URL VNPAY
-    const date = new Date();
-    const createDate = moment(date).utcOffset("+07:00").format("YYYYMMDDHHmmss");
-    const orderId = moment(date).utcOffset("+07:00").format("DDHHmmss");
+    const date = new Date()
+    const createDate = moment(date).utcOffset("+07:00").format("YYYYMMDDHHmmss")
+    const orderId = moment(date).utcOffset("+07:00").format("DDHHmmss")
 
-    let ipAddr = req.headers["x-forwarded-for"] || req.socket.remoteAddress || "127.0.0.1";
-    if (ipAddr.includes(",")) ipAddr = ipAddr.split(",")[0].trim();
+    let ipAddr =
+      req.headers["x-forwarded-for"] || req.socket.remoteAddress || "127.0.0.1"
+    if (ipAddr.includes(",")) ipAddr = ipAddr.split(",")[0].trim()
 
-    const tmnCode = process.env.VNP_TMNCODE?.trim() || "";
-    const secretKey = process.env.VNP_HASHSECRET?.trim() || "";
-    const endpoint = process.env.VNP_URL?.trim() || "https://sandbox.vnpayment.vn/paymentv2/vpcpay.html";
-    const returnUrl = process.env.VNP_RETURNURL?.trim() || "";
+    const tmnCode = process.env.VNP_TMNCODE?.trim() || ""
+    const secretKey = process.env.VNP_HASHSECRET?.trim() || ""
+    const endpoint =
+      process.env.VNP_URL?.trim() ||
+      "https://sandbox.vnpayment.vn/paymentv2/vpcpay.html"
+    const returnUrl = process.env.VNP_RETURNURL?.trim() || ""
 
     const params = {
       vnp_Version: "2.1.0",
       vnp_Command: "pay",
       vnp_TmnCode: tmnCode,
-      vnp_Amount: (finalTotalVND * 100).toString(), 
+      vnp_Amount: (finalTotalVND * 100).toString(),
       vnp_CurrCode: "VND",
       vnp_TxnRef: orderId,
       vnp_OrderInfo: `Payment for order ${orderId}`,
@@ -85,24 +92,24 @@ router.post("/create-payment", async (req, res, next) => {
       vnp_ReturnUrl: returnUrl,
       vnp_IpAddr: ipAddr,
       vnp_CreateDate: createDate,
-    };
+    }
 
-    const signData = buildSignData(params);
-    const hmac = crypto.createHmac("sha512", secretKey);
-    const signature = hmac.update(Buffer.from(signData, "utf-8")).digest("hex");
+    const signData = buildSignData(params)
+    const hmac = crypto.createHmac("sha512", secretKey)
+    const signature = hmac.update(Buffer.from(signData, "utf-8")).digest("hex")
 
-    params["vnp_SecureHash"] = signature;
-    const paymentUrl = `${endpoint}?${buildSignData(params)}`;
+    params["vnp_SecureHash"] = signature
+    const paymentUrl = `${endpoint}?${buildSignData(params)}`
 
-    res.json({ paymentUrl: paymentUrl });
+    res.json({ paymentUrl: paymentUrl })
   } catch (error) {
-    next(error);
+    next(error)
   }
-});
+})
 
-router.get("/vnpay_ipn", async (req, res) => {
+router.get("/vnpay_ipn", verifyToken, async (req, res) => {
   const secretKey = process.env.VNP_HASHSECRET?.trim() || ""
-  let vnp_Params = { ...req.query } 
+  let vnp_Params = { ...req.query }
   const secureHash = vnp_Params["vnp_SecureHash"]
 
   delete vnp_Params["vnp_SecureHash"]
@@ -206,7 +213,7 @@ const transporter = nodemailer.createTransport({
 });
 
 
-router.get("/vnpay_return", async (req, res, next) => {
+router.get("/vnpay_return",verifyToken, async (req, res, next) => {
   try {
     const userId = req.user.userId;
     let vnp_Params = { ...req.query };
