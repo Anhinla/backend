@@ -31,7 +31,7 @@ function sortObject(obj) {
 }
 
 // 1. TẠO URL THANH TOÁN
-router.post("/create-payment", async (req, res) => {
+router.post("/create-payment", ;async (req, res) => {
   const date = new Date()
 
   // FIX 1: Ép múi giờ về GMT+7 (Việt Nam) bất kể server đang chạy ở đâu
@@ -74,6 +74,17 @@ router.post("/create-payment", async (req, res) => {
   const hmac = crypto.createHmac("sha512", secretKey)
   const signed = hmac.update(Buffer.from(signData, "utf-8")).digest("hex")
 
+  console.log("===== DEBUG VNPAY =====")
+  console.log("1. TMN Code:", tmnCode)
+  console.log(
+    "2. Secret Key:",
+    secretKey
+      ? "Đã nhận (Bắt đầu bằng: " + secretKey.substring(0, 5) + "...)"
+      : "LỖI: UNDEFINED HOẶC RỖNG",
+  )
+  console.log("3. Chuỗi SignData:", signData)
+  console.log("4. Hash tạo ra:", signed)
+  console.log("=======================")
   vnp_Params["vnp_SecureHash"] = signed
   vnpUrl += "?" + querystring.stringify(vnp_Params, { encode: false })
 
