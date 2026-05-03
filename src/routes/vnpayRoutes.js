@@ -1,7 +1,6 @@
 import express from "express"
 import moment from "moment"
 import crypto from "crypto"
-import querystring from "qs"
 import { eq } from "drizzle-orm"
 import { db } from "../config/db.js"
 import {
@@ -13,98 +12,87 @@ import {
 
 const router = express.Router()
 
-// Hàm sắp xếp object bắt buộc của VNPay
-function sortObject(obj) {
-  let sorted = {}
-  let str = []
-  let key
-  for (key in obj) {
-    if (obj.hasOwnProperty(key)) {
-      str.push(encodeURIComponent(key))
-    }
-  }
-  str.sort()
-  for (key = 0; key < str.length; key++) {
-    sorted[str[key]] = encodeURIComponent(obj[str[key]]).replace(/%20/g, "+")
-  }
-  return sorted
+// Hàm này mô phỏng CHÍNH XÁC logic của urllib.parse.urlencode() trong Python
+function buildSignData(params) {
+  const sortedKeys = Object.keys(params).sort()
+  const signData = sortedKeys
+    .map((key) => {
+      const value = String(params[key])
+      // Python's urlencode tự động chuyển dấu cách thành '+', JS encodeURIComponent dùng '%20'
+      // Do đó ta dùng replace để ép JS hành xử giống hệt Python
+      const encodedValue = encodeURIComponent(value).replace(/%20/g, "+")
+      return `${key}=${encodedValue}`
+    })
+    .join("&")
+
+  return signData
 }
 
 // 1. TẠO URL THANH TOÁN
-router.post("/create-payment",async (req, res) => {
+router.post("/create-payment", async (req, res) => {
   const date = new Date()
-
-  // FIX 1: Ép múi giờ về GMT+7 (Việt Nam) bất kể server đang chạy ở đâu
   const createDate = moment(date).utcOffset("+07:00").format("YYYYMMDDHHmmss")
   const orderId = moment(date).utcOffset("+07:00").format("DDHHmmss")
 
-  // FIX 2: Lấy đúng 1 IP thật của user khi app chạy sau proxy của Render
+  // Lấy IP, fallback về 127.0.0.1 y như code bạn của bạn
   let ipAddr =
     req.headers["x-forwarded-for"] || req.socket.remoteAddress || "127.0.0.1"
   if (ipAddr.includes(",")) {
     ipAddr = ipAddr.split(",")[0].trim()
   }
 
-  // FIX 3: Thêm .trim() để tránh lỗi vô tình dư khoảng trắng trong file .env
-  const tmnCode = process.env.VNP_TMNCODE?.trim()
-  const secretKey = process.env.VNP_HASHSECRET?.trim()
-  let vnpUrl = process.env.VNP_URL?.trim()
-  const returnUrl = process.env.VNP_RETURNURL?.trim()
+  // Khai báo Environment Variables (lọc sạch bằng .trim() đề phòng dư dấu cách)
+  const tmnCode = process.env.VNP_TMNCODE?.trim() || ""
+  const secretKey = process.env.VNP_HASHSECRET?.trim() || ""
+  const endpoint =
+    process.env.VNP_URL?.trim() ||
+    "https://sandbox.vnpayment.vn/paymentv2/vpcpay.html"
+  const returnUrl = process.env.VNP_RETURNURL?.trim() || ""
 
-  const amount = Math.round(Number(req.body.amount)) // Đảm bảo amount là số nguyên
+  const amount = Math.round(Number(req.body.amount))
 
-  let vnp_Params = {
+  const params = {
     vnp_Version: "2.1.0",
     vnp_Command: "pay",
     vnp_TmnCode: tmnCode,
-    vnp_Locale: "en",
+    vnp_Amount: (amount * 100).toString(),
     vnp_CurrCode: "VND",
     vnp_TxnRef: orderId,
     vnp_OrderInfo: `Payment for order ${orderId}`,
     vnp_OrderType: "other",
-    vnp_Amount: amount * 100,
+    vnp_Locale: "vn", // Đổi sang "vn" cho giống code của bạn bạn
     vnp_ReturnUrl: returnUrl,
     vnp_IpAddr: ipAddr,
     vnp_CreateDate: createDate,
   }
 
-  vnp_Params = sortObject(vnp_Params)
+  // 1. Tạo chuỗi ký tự theo chuẩn Python
+  const signData = buildSignData(params)
 
-  const signData = querystring.stringify(vnp_Params, { encode: false })
+  // 2. Băm chuỗi bằng HMAC SHA512
   const hmac = crypto.createHmac("sha512", secretKey)
-  const signed = hmac.update(Buffer.from(signData, "utf-8")).digest("hex")
+  const signature = hmac.update(Buffer.from(signData, "utf-8")).digest("hex")
 
-  console.log("===== DEBUG VNPAY =====")
-  console.log("1. TMN Code:", tmnCode)
-  console.log(
-    "2. Secret Key:",
-    secretKey
-      ? "Đã nhận (Bắt đầu bằng: " + secretKey.substring(0, 5) + "...)"
-      : "LỖI: UNDEFINED HOẶC RỖNG",
-  )
-  console.log("3. Chuỗi SignData:", signData)
-  console.log("4. Hash tạo ra:", signed)
-  console.log("=======================")
-  vnp_Params["vnp_SecureHash"] = signed
-  vnpUrl += "?" + querystring.stringify(vnp_Params, { encode: false })
+  // 3. Đưa signature vào object và tạo URL cuối cùng
+  params["vnp_SecureHash"] = signature
+  const finalQuery = buildSignData(params)
+  const paymentUrl = `${endpoint}?${finalQuery}`
 
-  res.json({ paymentUrl: vnpUrl })
+  res.json({ paymentUrl: paymentUrl })
 })
 
 // 2. NHẬN KẾT QUẢ TỪ VNPAY (IPN)
 router.get("/vnpay_ipn", async (req, res) => {
-  let vnp_Params = req.query
+  const secretKey = process.env.VNP_HASHSECRET?.trim() || ""
+  let vnp_Params = { ...req.query } // Tạo bản sao của query để không đụng tới object gốc
   const secureHash = vnp_Params["vnp_SecureHash"]
 
+  // Xóa hash ra khỏi tham số để tính toán lại chữ ký
   delete vnp_Params["vnp_SecureHash"]
   delete vnp_Params["vnp_SecureHashType"]
 
-  // FIX 4: Đồng bộ cách sort bằng hàm sortObject thay vì Object.keys().sort()
-  // Để đảm bảo chữ ký tạo ra khớp 100% với lúc gửi đi
-  vnp_Params = sortObject(vnp_Params)
-
-  const secretKey = process.env.VNP_HASHSECRET?.trim()
-  const signData = querystring.stringify(vnp_Params, { encode: false })
+  // DÙNG LẠI CHÍNH HÀM buildSignData ĐỂ ĐẢM BẢO KHỚP 100% VỚI LÚC GỬI
+  const signData = buildSignData(vnp_Params)
   const hmac = crypto.createHmac("sha512", secretKey)
   const signed = hmac.update(Buffer.from(signData, "utf-8")).digest("hex")
 
