@@ -217,27 +217,31 @@ const transporter = nodemailer.createTransport({
 });
 
 
-router.get("/vnpay_return",verifyToken, async (req, res, next) => {
+router.get("/vnpay_return", verifyToken, async (req, res, next) => {
   try {
-    const userId = req.user.userId;
-    let vnp_Params = { ...req.query };
-    const secureHash = vnp_Params["vnp_SecureHash"];
+    const userId = req.user.userId
+    let vnp_Params = { ...req.query }
+    const secureHash = vnp_Params["vnp_SecureHash"]
 
-    delete vnp_Params["vnp_SecureHash"];
-    delete vnp_Params["vnp_SecureHashType"];
+    delete vnp_Params["vnp_SecureHash"]
+    delete vnp_Params["vnp_SecureHashType"]
 
-    const signData = buildSignData(vnp_Params);
-    const secretKey = process.env.VNP_HASHSECRET?.trim() || "";
-    const hmac = crypto.createHmac("sha512", secretKey);
-    const signed = hmac.update(Buffer.from(signData, "utf-8")).digest("hex");
+    const signData = buildSignData(vnp_Params)
+    const secretKey = process.env.VNP_HASHSECRET?.trim() || ""
+    const hmac = crypto.createHmac("sha512", secretKey)
+    const signed = hmac.update(Buffer.from(signData, "utf-8")).digest("hex")
 
     if (secureHash !== signed) {
-      return res.status(200).json({ success: false, message: "Invalid signature" });
+      return res
+        .status(200)
+        .json({ success: false, message: "Invalid signature" })
     }
 
-    const responseCode = vnp_Params["vnp_ResponseCode"];
+    const responseCode = vnp_Params["vnp_ResponseCode"]
     if (responseCode !== "00") {
-      return res.status(200).json({ success: false, message: "Transaction failed or canceled" });
+      return res
+        .status(200)
+        .json({ success: false, message: "Transaction failed or canceled" })
     }
 
     // ==========================================
@@ -258,64 +262,73 @@ router.get("/vnpay_return",verifyToken, async (req, res, next) => {
       .from(userCarts)
       .leftJoin(courses, eq(userCarts.courseId, courses.courseId))
       .leftJoin(prompts, eq(userCarts.promptId, prompts.promptId))
-      .where(eq(userCarts.userId, userId));
+      .where(eq(userCarts.userId, userId))
 
     if (cartItems.length === 0) {
-      return res.status(400).json({ success: false, message: "Cart is empty" });
+      return res.status(400).json({ success: false, message: "Cart is empty" })
     }
 
-    let totalAmountUSD = 0;
+    let totalAmountUSD = 0
     const itemsToProcess = cartItems.map((item) => {
-      const price = item.courseId ? Number(item.coursePrice) : Number(item.promptPrice);
-      totalAmountUSD += price * (item.quantity || 1);
-      return { ...item, finalPrice: price };
-    });
+      const price = item.courseId
+        ? Number(item.coursePrice)
+        : Number(item.promptPrice)
+      totalAmountUSD += price * (item.quantity || 1)
+      return { ...item, finalPrice: price }
+    })
 
-    const finalTotalUSD = totalAmountUSD * 1.1;
+    const finalTotalUSD = totalAmountUSD * 1.1
 
-    // 2. Xử lý Database Transaction
-    let purchasedItems = [];
-    let newOrder;
+    // 2. Xử lý Database (Thực hiện tuần tự, KHÔNG dùng db.transaction)
+    let purchasedItems = []
 
-    await db.transaction(async (tx) => {
-      [newOrder] = await tx
-        .insert(orders)
-        .values({
-          userId: userId,
-          status: "completed",
-          vnpTxnRef: vnp_Params["vnp_TxnRef"], // Lưu mã giao dịch của VNPay
-          totalAmount: finalTotalUSD.toFixed(2), // Vẫn lưu USD cho đồng nhất database
-        })
-        .returning();
+    // Insert order mới
+    const insertedOrders = await db
+      .insert(orders)
+      .values({
+        userId: userId,
+        status: "completed",
+        vnpTxnRef: vnp_Params["vnp_TxnRef"], // Lưu mã giao dịch của VNPay
+        totalAmount: finalTotalUSD.toFixed(2), // Vẫn lưu USD cho đồng nhất database
+      })
+      .returning()
 
-      for (const item of itemsToProcess) {
-        await tx.insert(orderDetails).values({
-          orderId: newOrder.orderId,
-          courseId: item.courseId,
-          promptId: item.promptId,
-          price: item.finalPrice.toFixed(2),
-          quantity: item.quantity,
-        });
+    const newOrder = insertedOrders[0]
 
-        purchasedItems.push({
-          id: item.courseId || item.promptId,
-          type: item.courseId ? "course" : "prompt",
-          title: item.courseId ? item.courseTitle : item.promptTitle,
-          price: item.finalPrice,
-          quantity: item.quantity,
-        });
+    // Lặp để lưu chi tiết đơn hàng và khóa học
+    for (const item of itemsToProcess) {
+      await db.insert(orderDetails).values({
+        orderId: newOrder.orderId,
+        courseId: item.courseId,
+        promptId: item.promptId,
+        price: item.finalPrice.toFixed(2),
+        quantity: item.quantity,
+      })
 
-        if (item.courseId) {
-          await tx.insert(userCourses).values({ userId: userId, courseId: item.courseId }).onConflictDoNothing();
-        }
+      purchasedItems.push({
+        id: item.courseId || item.promptId,
+        type: item.courseId ? "course" : "prompt",
+        title: item.courseId ? item.courseTitle : item.promptTitle,
+        price: item.finalPrice,
+        quantity: item.quantity,
+      })
+
+      if (item.courseId) {
+        await db
+          .insert(userCourses)
+          .values({ userId: userId, courseId: item.courseId })
+          .onConflictDoNothing()
       }
+    }
 
-      await tx.delete(userCarts).where(eq(userCarts.userId, userId));
-    });
+    // Xóa giỏ hàng
+    await db.delete(userCarts).where(eq(userCarts.userId, userId))
 
     // 3. Gửi Email Receipt
     try {
-      const currentUser = await db.query.users.findFirst({ where: eq(users.userId, userId) });
+      const currentUser = await db.query.users.findFirst({
+        where: eq(users.userId, userId),
+      })
 
       if (currentUser && currentUser.email) {
         const htmlContent = `
@@ -332,13 +345,17 @@ router.get("/vnpay_return",verifyToken, async (req, res, next) => {
                 </tr>
               </thead>
               <tbody>
-                ${purchasedItems.map((i) => `
+                ${purchasedItems
+                  .map(
+                    (i) => `
                   <tr>
                     <td style="padding: 10px; border-bottom: 1px solid #eee;">${i.title}</td>
                     <td style="padding: 10px; border-bottom: 1px solid #eee; text-transform: capitalize;">${i.type}</td>
                     <td style="padding: 10px; border-bottom: 1px solid #eee; text-align: right;">$${i.price.toFixed(2)}</td>
                   </tr>
-                `).join("")}
+                `,
+                  )
+                  .join("")}
               </tbody>
             </table>
             <div style="margin-top: 20px; text-align: right;">
@@ -347,17 +364,17 @@ router.get("/vnpay_return",verifyToken, async (req, res, next) => {
               <h3 style="color: #333; margin: 10px 0;">Total Paid: $${finalTotalUSD.toFixed(2)}</h3>
             </div>
           </div>
-        `;
+        `
 
         await transporter.sendMail({
           from: '"PromptWizzard Support" <huynhnguyenngocanh91thcsduclap@gmail.com>',
           to: currentUser.email,
           subject: `Your receipt for Order #${newOrder.orderId}`,
           html: htmlContent,
-        });
+        })
       }
     } catch (mailError) {
-      console.error("Failed to send receipt email:", mailError);
+      console.error("Failed to send receipt email:", mailError)
     }
 
     // 4. Trả về Frontend để nó hiện trang Success
@@ -370,10 +387,9 @@ router.get("/vnpay_return",verifyToken, async (req, res, next) => {
         status: newOrder.status,
         items: purchasedItems,
       },
-    });
-
+    })
   } catch (error) {
-    next(error);
+    next(error)
   }
-});
+})
 export default router
