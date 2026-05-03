@@ -8,6 +8,10 @@ import {
   orderDetails,
   userCourses,
   transactions,
+  userCarts,
+  courses, 
+  prompts,
+  users, 
 } from "../db/schema.js"
 import { verifyToken } from "../middlewares/authMiddleware.js"
 
