@@ -31,7 +31,7 @@ function sortObject(obj) {
 }
 
 // 1. TẠO URL THANH TOÁN
-router.post("/create-payment", ;async (req, res) => {
+router.post("/create-payment",async (req, res) => {
   const date = new Date()
 
   // FIX 1: Ép múi giờ về GMT+7 (Việt Nam) bất kể server đang chạy ở đâu
