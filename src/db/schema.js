@@ -65,6 +65,10 @@ export const orders = pgTable("Order", {
   status: varchar("status", { length: 50 }).default("pending"),
   createdAt: timestamp("created_at").defaultNow(),
   totalAmount: numeric("totalAmount", { precision: 10, scale: 2 }).default("0"),
+  
+  vnpTxnRef: varchar("vnp_txn_ref", { length: 255 }), 
+  vnpTransactionNo: varchar("vnp_transaction_no", { length: 255 }), 
+  paymentMethod: varchar("payment_method", { length: 50 }).default("vnpay"),
 })
 
 export const orderDetails = pgTable("OrderDetail", {
@@ -143,3 +147,17 @@ export const userLessons = pgTable(
     }
   },
 )
+
+export const transactions = pgTable("Transaction", {
+  transactionId: serial("transactionId").primaryKey(),
+  orderId: integer("orderId")
+    .notNull()
+    .references(() => orders.orderId, { onDelete: "cascade" }),
+  vnpayTransactionNo: varchar("vnpay_transaction_no", { length: 255 }),
+  responseCode: varchar("response_code", { length: 10 }),
+  bankCode: varchar("bank_code", { length: 50 }),
+  amount: numeric("amount", { precision: 10, scale: 2 }),
+  orderInfo: text("order_info"),
+  status: varchar("status", { length: 50 }).default("pending"), 
+  createdAt: timestamp("created_at").defaultNow(),
+})
