@@ -324,60 +324,7 @@ router.get("/vnpay_return", verifyToken, async (req, res, next) => {
     // Xóa giỏ hàng
     await db.delete(userCarts).where(eq(userCarts.userId, userId))
 
-    // 3. Gửi Email Receipt
-    try {
-      const currentUser = await db.query.users.findFirst({
-        where: eq(users.userId, userId),
-      })
-
-      if (currentUser && currentUser.email) {
-        const htmlContent = `
-          <div style="font-family: Arial, sans-serif; max-w: 600px; margin: 0 auto; padding: 20px; border: 1px solid #eee; border-radius: 8px;">
-            <h2 style="color: #333; text-align: center;">VNPay Payment Successful!</h2>
-            <p>Hi ${currentUser.name},</p>
-            <p>Thank you for your purchase. Here is your receipt for order <strong>#${newOrder.orderId}</strong>.</p>
-            <table style="width: 100%; border-collapse: collapse; margin-top: 20px;">
-              <thead>
-                <tr style="background-color: #f9f9f9; text-align: left;">
-                  <th style="padding: 10px; border-bottom: 2px solid #ddd;">Item</th>
-                  <th style="padding: 10px; border-bottom: 2px solid #ddd;">Type</th>
-                  <th style="padding: 10px; border-bottom: 2px solid #ddd; text-align: right;">Price</th>
-                </tr>
-              </thead>
-              <tbody>
-                ${purchasedItems
-                  .map(
-                    (i) => `
-                  <tr>
-                    <td style="padding: 10px; border-bottom: 1px solid #eee;">${i.title}</td>
-                    <td style="padding: 10px; border-bottom: 1px solid #eee; text-transform: capitalize;">${i.type}</td>
-                    <td style="padding: 10px; border-bottom: 1px solid #eee; text-align: right;">$${i.price.toFixed(2)}</td>
-                  </tr>
-                `,
-                  )
-                  .join("")}
-              </tbody>
-            </table>
-            <div style="margin-top: 20px; text-align: right;">
-              <p style="color: #666; margin: 5px 0;">Subtotal: $${totalAmountUSD.toFixed(2)}</p>
-              <p style="color: #666; margin: 5px 0;">Tax (10%): $${(totalAmountUSD * 0.1).toFixed(2)}</p>
-              <h3 style="color: #333; margin: 10px 0;">Total Paid: $${finalTotalUSD.toFixed(2)}</h3>
-            </div>
-          </div>
-        `
-
-        await transporter.sendMail({
-          from: '"PromptWizzard Support" <huynhnguyenngocanh91thcsduclap@gmail.com>',
-          to: currentUser.email,
-          subject: `Your receipt for Order #${newOrder.orderId}`,
-          html: htmlContent,
-        })
-      }
-    } catch (mailError) {
-      console.error("Failed to send receipt email:", mailError)
-    }
-
-    // 4. Trả về Frontend để nó hiện trang Success
+    // 3. Trả về Frontend để nó hiện trang Success (Đã bỏ phần gửi mail)
     return res.status(200).json({
       success: true,
       message: "Order confirmed successfully!",
