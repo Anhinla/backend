@@ -13,10 +13,27 @@ import {
 
 const router = express.Router()
 
+function sortObject(obj) {
+  let sorted = {}
+  let str = []
+  let key
+  for (key in obj) {
+    if (obj.hasOwnProperty(key)) {
+      str.push(encodeURIComponent(key))
+    }
+  }
+  str.sort()
+  for (key = 0; key < str.length; key++) {
+    sorted[str[key]] = encodeURIComponent(obj[str[key]]).replace(/%20/g, "+")
+  }
+  return sorted
+}
+
 router.post("/create-payment", async (req, res) => {
   const date = new Date()
   const createDate = moment(date).format("YYYYMMDDHHmmss")
-  const ipAddr = req.headers["x-forwarded-for"] || req.socket.remoteAddress
+  const ipAddr =
+    req.headers["x-forwarded-for"] || req.socket.remoteAddress || "127.0.0.1" // Fix nhẹ đề phòng ipAddr bị undefined
 
   const tmnCode = process.env.VNP_TMNCODE
   const secretKey = process.env.VNP_HASHSECRET
@@ -25,6 +42,7 @@ router.post("/create-payment", async (req, res) => {
 
   const orderId = moment(date).format("DDHHmmss")
   const amount = req.body.amount
+
   let vnp_Params = {
     vnp_Version: "2.1.0",
     vnp_Command: "pay",
@@ -40,12 +58,7 @@ router.post("/create-payment", async (req, res) => {
     vnp_CreateDate: createDate,
   }
 
-  vnp_Params = Object.keys(vnp_Params)
-    .sort()
-    .reduce((obj, key) => {
-      obj[key] = vnp_Params[key]
-      return obj
-    }, {})
+  vnp_Params = sortObject(vnp_Params)
 
   const signData = querystring.stringify(vnp_Params, { encode: false })
   const hmac = crypto.createHmac("sha512", secretKey)
