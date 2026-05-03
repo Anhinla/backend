@@ -179,4 +179,38 @@ router.get("/vnpay_ipn", async (req, res) => {
   }
 })
 
+router.get("/vnpay_return", (req, res) => {
+  let vnp_Params = { ...req.query }
+  const secureHash = vnp_Params["vnp_SecureHash"]
+
+  delete vnp_Params["vnp_SecureHash"]
+  delete vnp_Params["vnp_SecureHashType"]
+
+  const signData = buildSignData(vnp_Params)
+  const secretKey = process.env.VNP_HASHSECRET?.trim() || ""
+  const hmac = crypto.createHmac("sha512", secretKey)
+  const signed = hmac.update(Buffer.from(signData, "utf-8")).digest("hex")
+
+  if (secureHash === signed) {
+    const responseCode = vnp_Params["vnp_ResponseCode"]
+    if (responseCode === "00") {
+      return res.status(200).json({
+        success: true,
+        message: "Transaction successful",
+        orderId: vnp_Params["vnp_TxnRef"],
+      })
+    } else {
+      return res.status(200).json({
+        success: false,
+        message: "Transaction canceled or failed",
+      })
+    }
+  } else {
+    return res.status(200).json({
+      success: false,
+      message: "Invalid signature (Checksum failed)",
+    })
+  }
+})
+
 export default router
